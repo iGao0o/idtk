@@ -1,36 +1,14 @@
 from django.views.generic import View
 from django.core.cache import cache
-from idtkapp.models import Device, DeviceStatus, DeviceData, DeviceLogModel
+from idtkapp import models
+from user import models as user_model
 from django_redis import get_redis_connection
 from django.http import JsonResponse, HttpRequest
-from django.contrib.auth.models import User, Permission
+from django.db.models import Q
 from datetime import datetime, timedelta
-from django.core import signing
-
 import random
 import json
-
-
 # Create your views here.
-# /idtkapp/login
-class LoginView(View):
-
-    def post(self, request: HttpRequest):
-        data = json.loads(request.body)
-        print(data)
-        user = {"id": random.randint(1, 10000), "name": data['username']}
-        token = signing.dumps(user)
-        cache.set("user:%s" % token, json.dumps(user))
-        data = {"status": 0, "data": "1234567"}
-        return JsonResponse(data)
-
-
-# /idtkapp/logout
-class LogOutView(View):
-
-    def get(self, request):
-        pass
-
 
 # 获取所有的列表
 # /idtkapp/getalldev
@@ -102,3 +80,34 @@ class GetDevData(View):
         }
         data = {"status": 0, "data": dev_data}
         return JsonResponse(data)
+
+
+# 添加设备
+# /idtkapp/adddev
+class AddDev(View):
+
+    def post(self, request: HttpRequest):
+        token = request.headers.get("token")
+        if token is None:
+            return JsonResponse({"status": 1, "msg": "没有登陆"})
+        user = cache.get("user:token:%s" % token)
+        if user is None:
+            return JsonResponse({"status": 1, "msg": "登陆已过期"})
+        user = json.loads(user)
+        if user_model.Permission.permission_choices['dev:add'][1] not in user['permission']:
+            return JsonResponse({"status": 3, "msg": "没有权限"})
+        obj = json.loads(request.body.decode("utf-8"))
+        dev_sn = obj.get("dev_sn")
+        name = obj.get("name")
+        site = obj.get("site")
+        note = obj.get("note")
+        if not all([name, site, dev_sn]):
+            return JsonResponse({"status": 5, "msg": "请正确填写设备的名称和位置"})
+        dev = models.Device.objects.filter(Q(dev_sn=dev_sn) | Q(name=name))
+        if dev.count() != 0:
+            return JsonResponse({"status": 6, "msg": "设备名或者设备id重复"})
+
+        device = models.Device(dev_sn=dev_sn, name=name, site=site, note=note,
+                               status=1, user=user['id'])
+        device.save()
+        return JsonResponse({"status": 0, "msg": "添加成功"})
